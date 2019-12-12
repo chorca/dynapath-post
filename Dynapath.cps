@@ -149,6 +149,10 @@ var toolTFormat = createFormat({decimals:0, zeropad:true, width:2});
 var toolHDFormat = createFormat({decimals:0, zeropad:true, width:3});
 // Unit format
 var unitOutputFormat = createFormat({decimals:0});
+// XYZ format
+var xyzFormat = createFormat({decimals:4, trim:false});
+// Feedrate format
+var fFormat = createFormat({decimals:4, trim:false});
 
 
 
@@ -156,7 +160,12 @@ var unitOutputFormat = createFormat({decimals:0});
 //  Modal Variables
 // *************************
 var unitOutput = createVariable({prefix: "P"}, unitOutputFormat);
-
+var toolOutput = createVariable({prefix: "T"}, toolTFormat);
+var coolantOutput = createVariable({prefix: "C"});
+var xOutput = createVariable({prefix: "X"}, xyzFormat);
+var yOutput = createVariable({prefix: "Y"}, xyzFormat);
+var zOutput = createVariable({prefix: "Z"}, xyzFormat);
+var fOutput = createVariable({prefix: "F"}, fFormat)
 
 
 // *************************
@@ -175,9 +184,9 @@ function formatTool(toolNum) {
   if (properties.useHDToolTable) {
     return "T" + toolTFormat.format(toolNum) +
            "H" + toolHDFormat.format(toolNum) +
-           "D" + toolHDFormat.format(toolNum)
+           "D" + toolHDFormat.format(toolNum);
   } else {
-    return "T" + toolTFormat.format(toolNum)
+    return ("T" + toolTFormat.format(toolNum));
   }
 }
 
@@ -189,20 +198,25 @@ function writeComment(text) {
   writeBlock("(T)", formatComment(text));
 }
 
-function writeTool(tool) {
+function writeTool(toolNum) {
   if (properties.useM06ForToolChange) {
     // Call toolchange function
-    writeBlock("(9)", "M06", formatTool(tool));
+    writeBlock("(9)", "M06", formatTool(toolNum));
   } else {
-    writeBlock("(9)", formatTool(tool));
+    writeBlock("(9)", formatTool(toolNum));
   }
 }
 
 function writeCoolant(coolant) {
-  if (coolant) {
-    writeBlock("(9)", "M08");
-  } else {
-    writeBlock("(9)", "M09");
+  // Only output if changed since last command
+  var coolantCheck = coolantOutput.format(coolant)
+  if (coolantCheck) {
+    // Dynapath only turns coolant on or off, 0 = off, 1> = on
+    if (coolant) {
+      writeBlock("(9)", "M08");
+    } else {
+      writeBlock("(9)", "M09");
+    }
   }
 }
 
@@ -241,23 +255,27 @@ function writeUnits(metric) {
 // you may need to alter the sequence of events by adding or subtracting
 // blocks from these sequences.
 
-function changeTool(tool) {
-  if (properties.useM06ForToolChange) {
-    // Automated tool change
-    // Coolant off
-    writeCoolant(false);
-    // Tell the operator what tool to load
-    writeComment(tool.getProductId());
-    // Change tool
-    writeTool(tool.getNumber());
-    //Spindle on
-    writeSpindle(true);
-    // Coolant on
-    writeCoolant(tool.getCoolant());
-    // Optionally dwell to allow spindle and coolant to get going
-    //writeDwell(2)
-  } else {
-    // Manual tool change
+function changeTool() {
+  // Figure out if toolchange is needed
+  var newTool = toolOutput.format(tool.number)
+  if (newTool) {
+    if (properties.useM06ForToolChange) {
+      // Automated tool change
+      // Coolant off
+      writeCoolant(0);
+      // Tell the operator what tool to load
+      writeComment(tool.getProductId());
+      // Change tool
+      writeTool(tool.getNumber());
+      //Spindle on
+      writeSpindle(true);
+      // Coolant on
+      writeCoolant(tool.getCoolant());
+      // Optionally dwell to allow spindle and coolant to get going
+      //writeDwell(2)
+    } else {
+      // Manual tool change
+    }
   }
 };
 
@@ -281,4 +299,24 @@ function onSection() {
   if (currentSection.hasParameter("operation:metric")) {
     writeUnits(unitOutput.format(currentSection.getParameter("operation:metric")));
   }
+
+  // New section = new action, so call toolchange
+  changeTool();
+
+}
+
+// Handle Rapid movements
+function onRapid(x, y, z) {
+  var xMove = xOutput.format(x);
+  var yMove = yOutput.format(y);
+  var zMove = zOutput.format(z);
+  writeBlock("(0)", xMove, yMove, zMove);
+}
+
+function onLinear(x, y, z, f) {
+  var xMove = xOutput.format(x);
+  var yMove = yOutput.format(y);
+  var zMove = zOutput.format(z);
+  var fRate = fOutput.format(f);
+  writeBlock("(1)", xMove, yMove, zMove, fRate);
 }
